@@ -75,6 +75,22 @@ def get_latest_bot_buy_order_id():
         return INITIAL_BUY_ORDER_ID
     
     raise Exception("No bot buy order found")
+    def is_buy_sold(buy_order_id):
+        sell_link_id = f"rsi-sell-{buy_order_id}"
+    
+        history = session.get_order_history(
+            category="spot",
+            symbol="BTCUSDC",
+            orderLinkId=sell_link_id,
+            limit=1
+        )
+    
+        orders = history.get("result", {}).get("list", [])
+    
+        return any(
+            order.get("orderStatus") == "Filled"
+            for order in orders
+        )
 @app.get("/check-initial-buy")
 def check_initial_buy():
     try:
