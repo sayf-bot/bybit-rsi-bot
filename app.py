@@ -183,6 +183,14 @@ def webhook():
         }), 200
     if action == "BUY":
         try:
+            buy_order_id = get_latest_bot_buy_order_id()
+
+            if buy_order_id and not is_buy_sold(buy_order_id):
+                return jsonify({
+                    "status": "ok",
+                    "action": "BUY",
+                    "trading": "skipped_existing_position"
+                }), 200
             order = session.place_order(
                 category="spot",
                 symbol="BTCUSDC",
