@@ -78,3 +78,9 @@ def webhook():
                 "status": "error",
                 "message": str(e)
             }), 500
+    if action == "SELL":
+        return jsonify({
+            "status": "ok",
+            "action": "SELL",
+            "trading": "sell_not_configured"
+        }), 200
