@@ -28,25 +28,6 @@ def home():
     return "Bybit RSI Bot is running", 200
 
 
-@app.get("/check-bybit")
-def check_bybit():
-    try:
-        balance = session.get_wallet_balance(
-            accountType="UNIFIED"
-        )
-
-        return jsonify({
-            "status": "ok",
-            "bybit": "connected",
-            "retMsg": balance.get("retMsg")
-        }), 200
-
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
-
 
 @app.post("/webhook")
 def webhook():
