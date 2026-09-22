@@ -191,8 +191,32 @@ def webhook():
                 "message": str(e)
             }), 500
     if action == "SELL":
+    try:
+        buy_order_id = get_latest_bot_buy_order_id()
+        sell_link_id = f"rsi-sell-{buy_order_id}"
+        qty = get_filled_btc_qty(buy_order_id)
+
+        order = session.place_order(
+            category="spot",
+            symbol="BTCUSDC",
+            side="Sell",
+            orderType="Market",
+            qty=qty,
+            marketUnit="baseCoin",
+            orderLinkId=sell_link_id
+        )
+
         return jsonify({
             "status": "ok",
             "action": "SELL",
-            "trading": "sell_not_configured"
+            "trading": "enabled",
+            "qty": qty,
+            "retMsg": order.get("retMsg"),
+            "orderId": order.get("result", {}).get("orderId")
         }), 200
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
