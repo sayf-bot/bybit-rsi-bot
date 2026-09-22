@@ -42,7 +42,30 @@ def check_bybit():
             "message": str(e)
         }), 500
 
+@app.get("/check-btcusdc")
+def check_btcusdc():
+    try:
+        info = session.get_instruments_info(
+            category="spot",
+            symbol="BTCUSDC"
+        )
 
+        instrument = info.get("result", {}).get("list", [])[0]
+        lot = instrument.get("lotSizeFilter", {})
+
+        return jsonify({
+            "status": "ok",
+            "symbol": instrument.get("symbol"),
+            "minOrderAmt": lot.get("minOrderAmt"),
+            "minOrderQty": lot.get("minOrderQty"),
+            "quotePrecision": lot.get("quotePrecision")
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 @app.post("/webhook")
 def webhook():
     data = request.get_json(silent=True)
