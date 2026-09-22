@@ -49,32 +49,32 @@ def get_filled_btc_qty(order_id):
     net_qty = net_qty.quantize(step, rounding=ROUND_DOWN)
     return format(net_qty, "f")
 def get_latest_bot_buy_order_id():
-history = session.get_order_history(
-    category="spot",
-    symbol="BTCUSDC",
-    limit=50
-)
-
-orders = history.get("result", {}).get("list", [])
-
-bot_buys = [
-    order for order in orders
-    if order.get("side") == "Buy"
-    and order.get("orderStatus") == "Filled"
-    and str(order.get("orderLinkId", "")).startswith("rsi-buy-")
-]
-
-if bot_buys:
-    bot_buys.sort(
-        key=lambda order: int(order.get("createdTime", "0")),
-        reverse=True
+    history = session.get_order_history(
+        category="spot",
+        symbol="BTCUSDC",
+        limit=50
     )
-    return bot_buys[0].get("orderId")
-
-if INITIAL_BUY_ORDER_ID:
-    return INITIAL_BUY_ORDER_ID
-
-raise Exception("No bot buy order found")
+    
+    orders = history.get("result", {}).get("list", [])
+    
+    bot_buys = [
+        order for order in orders
+        if order.get("side") == "Buy"
+        and order.get("orderStatus") == "Filled"
+        and str(order.get("orderLinkId", "")).startswith("rsi-buy-")
+    ]
+    
+    if bot_buys:
+        bot_buys.sort(
+            key=lambda order: int(order.get("createdTime", "0")),
+            reverse=True
+        )
+        return bot_buys[0].get("orderId")
+    
+    if INITIAL_BUY_ORDER_ID:
+        return INITIAL_BUY_ORDER_ID
+    
+    raise Exception("No bot buy order found")
 @app.get("/check-initial-buy")
 def check_initial_buy():
     try:
