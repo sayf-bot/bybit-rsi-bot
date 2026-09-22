@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 from flask import Flask, request, jsonify
 from pybit.unified_trading import HTTP
@@ -9,6 +10,7 @@ WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY", "")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET", "")
 ORDER_USDC = os.environ.get("ORDER_USDC", "50")
+INITIAL_BUY_ORDER_ID = os.environ.get("INITIAL_BUY_ORDER_ID", "")
 TRADING_ENABLED = os.environ.get("TRADING_ENABLED", "false").lower() == "true"
 # Основной Bybit — НЕ testnet
 session = HTTP(
@@ -98,7 +100,8 @@ def webhook():
                 side="Buy",
                 orderType="Market",
                 qty=ORDER_USDC,
-                marketUnit="quoteCoin"
+                marketUnit="quoteCoin",
+                orderLinkId=f"rsi-buy-{int(time.time())}"
             )
 
             return jsonify({
