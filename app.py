@@ -1,5 +1,6 @@
 import os
 import time
+from decimal import Decimal
 import requests
 from flask import Flask, request, jsonify
 from pybit.unified_trading import HTTP
@@ -18,7 +19,50 @@ session = HTTP(
     api_key=BYBIT_API_KEY,
     api_secret=BYBIT_API_SECRET
 )
+def get_filled_btc_qty(order_id):
+    history = session.get_order_history(
+        category="spot",
+        symbol="BTCUSDC",
+        orderId=order_id
+    )
 
+    orders = history.get("result", {}).get("list", [])
+
+    if not orders:
+        raise Exception("Buy order not found")
+
+    order = orders[0]
+
+    if order.get("orderStatus") != "Filled":
+        raise Exception(f"Buy order is not filled: {order.get('orderStatus')}")
+
+    qty = Decimal(order.get("cumExecQty", "0"))
+
+    fee_detail = order.get("cumFeeDetail", {}) or {}
+    btc_fee = Decimal(fee_detail.get("BTC", "0"))
+
+    net_qty = qty - btc_fee
+
+    if net_qty <= 0:
+        raise Exception("Net BTC quantity is zero")
+
+    return format(net_qty, "f")
+    @app.get("/check-initial-buy")
+def check_initial_buy():
+    try:
+        qty = get_filled_btc_qty(INITIAL_BUY_ORDER_ID)
+
+        return jsonify({
+            "status": "ok",
+            "orderId": INITIAL_BUY_ORDER_ID,
+            "netBtcQty": qty
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 @app.get("/check-ip")
 def check_ip():
     try:
