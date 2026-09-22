@@ -91,6 +91,23 @@ def get_latest_bot_buy_order_id():
             order.get("orderStatus") == "Filled"
             for order in orders
         )
+@app.get("/check-position")
+def check_position():
+    try:
+        buy_order_id = get_latest_bot_buy_order_id()
+        sold = is_buy_sold(buy_order_id)
+
+        return jsonify({
+            "status": "ok",
+            "buyOrderId": buy_order_id,
+            "sold": sold
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 @app.get("/check-initial-buy")
 def check_initial_buy():
     try:
