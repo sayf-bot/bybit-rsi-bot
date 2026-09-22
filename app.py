@@ -104,6 +104,7 @@ def check_btcusdc():
             "symbol": instrument.get("symbol"),
             "minOrderAmt": lot.get("minOrderAmt"),
             "minOrderQty": lot.get("minOrderQty"),
+            "basePrecision": lot.get("basePrecision"),
             "quotePrecision": lot.get("quotePrecision")
         }), 200
 
