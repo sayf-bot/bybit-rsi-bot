@@ -1,6 +1,6 @@
 import os
 import time
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 import requests
 from flask import Flask, request, jsonify
 from pybit.unified_trading import HTTP
@@ -45,7 +45,8 @@ def get_filled_btc_qty(order_id):
 
     if net_qty <= 0:
         raise Exception("Net BTC quantity is zero")
-
+    step = Decimal("0.000001")
+    net_qty = net_qty.quantize(step, rounding=ROUND_DOWN)
     return format(net_qty, "f")
 @app.get("/check-initial-buy")
 def check_initial_buy():
