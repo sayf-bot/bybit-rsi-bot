@@ -49,12 +49,12 @@ def webhook():
 
     # ВАЖНО: реальные сделки пока отключены
     if not TRADING_ENABLED:
-    return jsonify({
-        "status": "ok",
-        "action": action,
-        "trading": "disabled"
-    }), 200
-        if action == "BUY":
+        return jsonify({
+            "status": "ok",
+            "action": action,
+            "trading": "disabled"
+        }), 200
+    if action == "BUY":
         try:
             order = session.place_order(
                 category="spot",
