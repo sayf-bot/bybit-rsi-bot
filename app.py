@@ -9,6 +9,7 @@ WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY", "")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET", "")
 ORDER_USDC = os.environ.get("ORDER_USDC", "50")
+TRADING_ENABLED = os.environ.get("TRADING_ENABLED", "false").lower() == "true"
 # Основной Bybit — НЕ testnet
 session = HTTP(
     testnet=False,
@@ -47,8 +48,33 @@ def webhook():
     print(f"TradingView signal received: {action}", flush=True)
 
     # ВАЖНО: реальные сделки пока отключены
+    if not TRADING_ENABLED:
     return jsonify({
         "status": "ok",
         "action": action,
         "trading": "disabled"
     }), 200
+        if action == "BUY":
+        try:
+            order = session.place_order(
+                category="spot",
+                symbol="BTCUSDC",
+                side="Buy",
+                orderType="Market",
+                qty=ORDER_USDC,
+                marketUnit="quoteCoin"
+            )
+
+            return jsonify({
+                "status": "ok",
+                "action": "BUY",
+                "trading": "enabled",
+                "retMsg": order.get("retMsg"),
+                "orderId": order.get("result", {}).get("orderId")
+            }), 200
+
+        except Exception as e:
+            return jsonify({
+                "status": "error",
+                "message": str(e)
+            }), 500
