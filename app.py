@@ -1,4 +1,5 @@
 import os
+import requests
 from flask import Flask, request, jsonify
 from pybit.unified_trading import HTTP
 
@@ -15,7 +16,13 @@ session = HTTP(
     api_secret=BYBIT_API_SECRET
 )
 
-
+@app.get("/check-ip")
+def check_ip():
+    try:
+        response = requests.get("https://api.ipify.org?format=json", timeout=10)
+        return jsonify(response.json()), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 @app.get("/")
 def home():
     return "Bybit RSI Bot is running", 200
