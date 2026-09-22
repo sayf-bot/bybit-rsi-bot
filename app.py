@@ -47,7 +47,7 @@ def get_filled_btc_qty(order_id):
         raise Exception("Net BTC quantity is zero")
 
     return format(net_qty, "f")
-    @app.get("/check-initial-buy")
+@app.get("/check-initial-buy")
 def check_initial_buy():
     try:
         qty = get_filled_btc_qty(INITIAL_BUY_ORDER_ID)
