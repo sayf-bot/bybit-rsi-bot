@@ -8,7 +8,7 @@ app = Flask(__name__)
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY", "")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET", "")
-
+ORDER_USDC = os.environ.get("ORDER_USDC", "50")
 # Основной Bybit — НЕ testnet
 session = HTTP(
     testnet=False,
