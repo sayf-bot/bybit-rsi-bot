@@ -234,6 +234,12 @@ def webhook():
     if action == "SELL":
         try:
             buy_order_id = get_latest_bot_buy_order_id()
+            if is_buy_sold(buy_order_id):
+                return jsonify({
+                    "status": "ok",
+                    "action": "SELL",
+                    "trading": "skipped_already_sold"
+                }), 200
             sell_link_id = f"rsi-sell-{buy_order_id}"
             qty = get_filled_btc_qty(buy_order_id)
     
