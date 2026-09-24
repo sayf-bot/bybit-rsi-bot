@@ -10,40 +10,35 @@ from datetime import datetime, timedelta, timezone
 SYMBOL = "BTCUSDC"
 INTERVAL = "1m"
 
-# Сначала 90 дней.
-# Когда убедимся, что всё работает, увеличим до 180/365.
+# Тестируем 365 дней
 DAYS = 365
 
 START_CAPITAL = 1000.0
 
-# Размер каждой покупки
+# Размер одной сделки
 ORDER_USDC = 50.0
 
-# Комиссия:
-# 0.001 = 0.1% на каждую сторону
+# Комиссия 0.1% на покупку и 0.1% на продажу
 COMMISSION = 0.001
 
 RSI_PERIOD = 14
 
-# Какие уровни BUY будем автоматически проверять
-BUY_RSI_VALUES = range(15, 36)       # 15...35
-
-# Какие уровни SELL будем автоматически проверять
-SELL_RSI_VALUES = range(65, 91)      # 65...90
-
+# Диапазоны параметров, которые будем проверять
+BUY_RSI_VALUES = range(15, 36)   # 15...35
+SELL_RSI_VALUES = range(65, 91)  # 65...90
 
 BINANCE_URL = "https://data-api.binance.vision/api/v3/klines"
 
 
 # ============================================================
-# ЗАГРУЗКА ИСТОРИИ BINANCE
+# ЗАГРУЗКА СВЕЧЕЙ
 # ============================================================
 
 def download_candles():
     print()
-    print("=" * 70)
-    print(f"Загружаю {DAYS} дней {SYMBOL} {INTERVAL}")
-    print("=" * 70)
+    print("=" * 80)
+    print(f"ЗАГРУЗКА {DAYS} ДНЕЙ {SYMBOL} {INTERVAL}")
+    print("=" * 80)
 
     end_dt = datetime.now(timezone.utc)
     start_dt = end_dt - timedelta(days=DAYS)
@@ -52,7 +47,6 @@ def download_candles():
     end_ms = int(end_dt.timestamp() * 1000)
 
     candles = []
-
     current_start = start_ms
 
     session = requests.Session()
@@ -67,9 +61,10 @@ def download_candles():
             "limit": 1000
         }
 
-        success = False
+        rows = None
 
         for attempt in range(5):
+
             try:
                 response = session.get(
                     BINANCE_URL,
@@ -79,30 +74,31 @@ def download_candles():
 
                 if response.status_code == 200:
                     rows = response.json()
-                    success = True
                     break
 
                 print(
-                    f"\nHTTP {response.status_code}. "
-                    f"Попытка {attempt + 1}/5"
+                    f"\nHTTP {response.status_code}, "
+                    f"попытка {attempt + 1}/5"
                 )
 
             except Exception as e:
+
                 print(
-                    f"\nОшибка соединения: {e}. "
-                    f"Попытка {attempt + 1}/5"
+                    f"\nОшибка соединения: {e}, "
+                    f"попытка {attempt + 1}/5"
                 )
 
             time.sleep(2)
 
-        if not success:
-            print("\nНе удалось скачать данные.")
+        if rows is None:
+            print("\nНе удалось получить данные.")
             return []
 
         if not rows:
             break
 
         for row in rows:
+
             candles.append({
                 "time": int(row[0]),
                 "open": float(row[1]),
@@ -114,7 +110,6 @@ def download_candles():
 
         last_open_time = int(rows[-1][0])
 
-        # следующая минутная свеча
         current_start = last_open_time + 60_000
 
         print(
@@ -122,16 +117,16 @@ def download_candles():
             end="\r"
         )
 
-        # небольшая пауза, чтобы не долбить сервер
         time.sleep(0.08)
 
         if len(rows) < 1000:
             break
 
     print()
-    print(f"Готово. Всего свечей: {len(candles):,}")
+    print(f"Всего свечей: {len(candles):,}")
 
     if candles:
+
         first_date = datetime.fromtimestamp(
             candles[0]["time"] / 1000,
             tz=timezone.utc
@@ -149,7 +144,7 @@ def download_candles():
 
 
 # ============================================================
-# RSI ПО ФОРМУЛЕ WILDER
+# RSI WILDER
 # ============================================================
 
 def calculate_rsi(closes, period=14):
@@ -174,9 +169,14 @@ def calculate_rsi(closes, period=14):
 
     if avg_loss == 0:
         rsi[period] = 100.0
+
     else:
+
         rs = avg_gain / avg_loss
-        rsi[period] = 100 - (100 / (1 + rs))
+
+        rsi[period] = (
+            100 - (100 / (1 + rs))
+        )
 
     for i in range(period + 1, len(closes)):
 
@@ -194,10 +194,16 @@ def calculate_rsi(closes, period=14):
         ) / period
 
         if avg_loss == 0:
+
             rsi[i] = 100.0
+
         else:
+
             rs = avg_gain / avg_loss
-            rsi[i] = 100 - (100 / (1 + rs))
+
+            rsi[i] = (
+                100 - (100 / (1 + rs))
+            )
 
     return rsi
 
@@ -208,7 +214,10 @@ def calculate_rsi(closes, period=14):
 
 def run_backtest(data, buy_level, sell_level):
 
-    closes = [x["close"] for x in data]
+    closes = [
+        candle["close"]
+        for candle in data
+    ]
 
     rsi_values = calculate_rsi(
         closes,
@@ -227,6 +236,7 @@ def run_backtest(data, buy_level, sell_level):
     total_fees = 0.0
 
     peak_equity = START_CAPITAL
+
     max_drawdown = 0.0
     max_drawdown_percent = 0.0
 
@@ -246,29 +256,25 @@ def run_backtest(data, buy_level, sell_level):
 
         current_close = data[i]["close"]
 
-        # Сигнал получаем на закрытии текущей свечи,
-        # исполняем на открытии следующей.
+        # Сигнал появился на закрытии текущей свечи.
+        # Сделку считаем исполненной на открытии следующей.
         next_open = data[i + 1]["open"]
 
-        # BUY:
-        # RSI был ниже/равен уровню
-        # и пересёк его снизу вверх.
+        # RSI пересёк BUY уровень снизу вверх
         buy_signal = (
             previous_rsi <= buy_level
             and current_rsi > buy_level
         )
 
-        # SELL:
-        # RSI был выше/равен уровню
-        # и пересёк его сверху вниз.
+        # RSI пересёк SELL уровень сверху вниз
         sell_signal = (
             previous_rsi >= sell_level
             and current_rsi < sell_level
         )
 
-        # --------------------------
-        # ПОКУПКА
-        # --------------------------
+        # ====================================================
+        # BUY
+        # ====================================================
 
         if (
             btc == 0
@@ -276,65 +282,75 @@ def run_backtest(data, buy_level, sell_level):
             and cash >= ORDER_USDC
         ):
 
-            buy_fee = ORDER_USDC * COMMISSION
-
-            usable_usdc = (
-                ORDER_USDC - buy_fee
+            buy_fee = (
+                ORDER_USDC
+                * COMMISSION
             )
 
-            btc = usable_usdc / next_open
+            usable_usdc = (
+                ORDER_USDC
+                - buy_fee
+            )
+
+            btc = (
+                usable_usdc
+                / next_open
+            )
 
             entry_price = next_open
+
             entry_total_cost = ORDER_USDC
 
             cash -= ORDER_USDC
 
             total_fees += buy_fee
 
-        # --------------------------
-        # ПРОДАЖА
-        # --------------------------
+        # ====================================================
+        # SELL
+        # ====================================================
 
         elif (
             btc > 0
             and sell_signal
         ):
 
-            gross_value = btc * next_open
+            gross_value = (
+                btc
+                * next_open
+            )
 
             sell_fee = (
-                gross_value * COMMISSION
+                gross_value
+                * COMMISSION
             )
 
             received = (
-                gross_value - sell_fee
+                gross_value
+                - sell_fee
             )
 
-            # Продаём только если после комиссии
-            # получим больше, чем потратили.
-            profitable_after_fees = (
-                received > entry_total_cost
+            # ВАЖНО:
+            # теперь закрываем сделку
+            # независимо от того,
+            # прибыль она дала или убыток.
+            cash += received
+
+            pnl = (
+                received
+                - entry_total_cost
             )
 
-            if profitable_after_fees:
+            trades.append(pnl)
 
-                cash += received
+            total_fees += sell_fee
 
-                pnl = (
-                    received - entry_total_cost
-                )
+            btc = 0.0
+            entry_price = None
+            entry_total_cost = None
 
-                trades.append(pnl)
-
-                total_fees += sell_fee
-
-                btc = 0.0
-                entry_price = None
-                entry_total_cost = None
-
-        # --------------------------
-        # EQUITY И ПРОСАДКА
-        # --------------------------
+        # ====================================================
+        # EQUITY / DRAWDOWN
+        # ====================================================
 
         equity = (
             cash
@@ -345,7 +361,8 @@ def run_backtest(data, buy_level, sell_level):
             peak_equity = equity
 
         drawdown = (
-            peak_equity - equity
+            peak_equity
+            - equity
         )
 
         if drawdown > max_drawdown:
@@ -363,12 +380,13 @@ def run_backtest(data, buy_level, sell_level):
                 dd_percent
                 > max_drawdown_percent
             ):
+
                 max_drawdown_percent = (
                     dd_percent
                 )
 
     # ========================================================
-    # ОТКРЫТАЯ ПОЗИЦИЯ
+    # ФИНАЛЬНАЯ СТОИМОСТЬ
     # ========================================================
 
     last_price = data[-1]["close"]
@@ -386,24 +404,34 @@ def run_backtest(data, buy_level, sell_level):
     closed_trades = len(trades)
 
     winning_trades = sum(
-        1 for x in trades
-        if x > 0
+        1
+        for pnl in trades
+        if pnl > 0
     )
 
     losing_trades = sum(
-        1 for x in trades
-        if x < 0
+        1
+        for pnl in trades
+        if pnl < 0
+    )
+
+    breakeven_trades = sum(
+        1
+        for pnl in trades
+        if pnl == 0
     )
 
     gross_profit = sum(
-        x for x in trades
-        if x > 0
+        pnl
+        for pnl in trades
+        if pnl > 0
     )
 
     gross_loss = abs(
         sum(
-            x for x in trades
-            if x < 0
+            pnl
+            for pnl in trades
+            if pnl < 0
         )
     )
 
@@ -416,7 +444,7 @@ def run_backtest(data, buy_level, sell_level):
 
     elif gross_profit > 0:
 
-        profit_factor = 999.0
+        profit_factor = float("inf")
 
     else:
 
@@ -450,6 +478,7 @@ def run_backtest(data, buy_level, sell_level):
 
         "wins": winning_trades,
         "losses": losing_trades,
+        "breakeven": breakeven_trades,
 
         "win_rate": win_rate,
 
@@ -466,31 +495,50 @@ def run_backtest(data, buy_level, sell_level):
 
         "fees": total_fees,
 
-        "open_position": btc > 0
+        "open_position": btc > 0,
+
+        "entry_price": entry_price
     }
 
 
 # ============================================================
-# ПЕЧАТЬ РЕЗУЛЬТАТА
+# ВЫВОД ОДНОЙ СТРОКИ
 # ============================================================
 
 def print_result(result):
+
+    pf = result["profit_factor"]
+
+    if pf == float("inf"):
+        pf_text = "INF"
+    else:
+        pf_text = f"{pf:.2f}"
+
+    open_text = (
+        "YES"
+        if result["open_position"]
+        else "NO"
+    )
 
     print(
         f"BUY {result['buy']:>2}  "
         f"SELL {result['sell']:>2} | "
         f"Profit ${result['profit']:>8.2f} | "
         f"Trades {result['trades']:>4} | "
+        f"W {result['wins']:>3} | "
+        f"L {result['losses']:>3} | "
         f"Win {result['win_rate']:>6.2f}% | "
+        f"Avg ${result['average_trade']:>6.2f} | "
         f"DD ${result['max_drawdown']:>7.2f} | "
-        f"DD {result['max_drawdown_percent']:>6.2f}% | "
-        f"PF {result['profit_factor']:>7.2f} | "
-        f"Fees ${result['fees']:>7.2f}"
+        f"DD% {result['max_drawdown_percent']:>6.2f} | "
+        f"PF {pf_text:>6} | "
+        f"Fees ${result['fees']:>7.2f} | "
+        f"Open {open_text}"
     )
 
 
 # ============================================================
-# ОСНОВНАЯ ПРОГРАММА
+# MAIN
 # ============================================================
 
 def main():
@@ -498,29 +546,27 @@ def main():
     data = download_candles()
 
     if len(data) < 5000:
+
         print()
-        print(
-            "Недостаточно исторических данных."
-        )
+        print("Недостаточно исторических данных.")
+
         return
 
-    print()
-    print("=" * 70)
-    print("РАЗДЕЛЕНИЕ ИСТОРИИ")
-    print("=" * 70)
+    # ========================================================
+    # TRAIN / TEST
+    # ========================================================
 
-    # 70% истории:
-    # подбор параметров
     split_index = int(
         len(data) * 0.70
     )
 
     train_data = data[:split_index]
-
-    # 30%:
-    # данные, которые параметры
-    # при подборе не видели
     test_data = data[split_index:]
+
+    print()
+    print("=" * 80)
+    print("РАЗДЕЛЕНИЕ ДАННЫХ")
+    print("=" * 80)
 
     print(
         f"TRAIN свечей: "
@@ -532,10 +578,14 @@ def main():
         f"{len(test_data):,}"
     )
 
+    # ========================================================
+    # TRAIN
+    # ========================================================
+
     print()
-    print("=" * 70)
+    print("=" * 80)
     print("ПРОВЕРЯЮ КОМБИНАЦИИ RSI")
-    print("=" * 70)
+    print("=" * 80)
 
     train_results = []
 
@@ -558,8 +608,8 @@ def main():
                 sell_level
             )
 
-            # Слишком мало сделок —
-            # такой результат ненадёжен.
+            # Не рассматриваем совсем
+            # редкие стратегии
             if result["trades"] >= 10:
 
                 train_results.append(
@@ -582,63 +632,66 @@ def main():
             "Не найдено вариантов "
             "с достаточным количеством сделок."
         )
+
         return
 
     # ========================================================
-    # НЕ БЕРЁМ ПРОСТО МАКСИМАЛЬНУЮ ПРИБЫЛЬ
-    #
-    # Сначала нужны:
-    # - положительная прибыль
-    # - разумная просадка
-    # - достаточное количество сделок
+    # ФИЛЬТР TRAIN
     # ========================================================
 
-    filtered = []
+    filtered_train = []
 
     for result in train_results:
 
         if (
             result["profit"] > 0
             and result["max_drawdown_percent"] < 10
+            and result["profit_factor"] > 1
         ):
 
-            filtered.append(
+            filtered_train.append(
                 result
             )
 
-    if not filtered:
-        filtered = train_results
+    if not filtered_train:
 
-    # Сортировка:
-    # сначала прибыль,
-    # затем меньшая просадка.
-    filtered.sort(
+        print()
+        print(
+            "На TRAIN нет прибыльных "
+            "вариантов по заданным условиям."
+        )
+
+        # Всё равно покажем лучшие,
+        # чтобы понять общую картину.
+        filtered_train = train_results
+
+    filtered_train.sort(
         key=lambda x: (
             x["profit"],
-            -x["max_drawdown"]
+            x["profit_factor"],
+            -x["max_drawdown_percent"]
         ),
         reverse=True
     )
 
-    # Берём 30 лучших кандидатов TRAIN
-    top_train = filtered[:30]
+    top_train = filtered_train[:30]
 
     print()
-    print("=" * 70)
-    print("ТОП-10 НА TRAIN")
-    print("=" * 70)
+    print("=" * 120)
+    print("ТОП-15 НА TRAIN")
+    print("=" * 120)
 
-    for result in top_train[:10]:
+    for result in top_train[:15]:
         print_result(result)
 
     # ========================================================
-    # ПРОВЕРКА НА НЕВИДАННЫХ ДАННЫХ
+    # TEST
     # ========================================================
 
     print()
-    print("=" * 70)
+    print("=" * 120)
     print("ПРОВЕРКА НА НЕВИДАННЫХ TEST-ДАННЫХ")
-    print("=" * 70)
+    print("=" * 120)
 
     test_results = []
 
@@ -654,68 +707,117 @@ def main():
             result
         )
 
-    # ========================================================
-    # РАНЖИРОВАНИЕ TEST
-    # ========================================================
-
-    # Нам важны:
-    # прибыль,
-    # количество сделок,
-    # просадка.
     test_results.sort(
         key=lambda x: (
             x["profit"],
-            -x["max_drawdown"]
+            x["profit_factor"],
+            -x["max_drawdown_percent"]
         ),
         reverse=True
     )
 
     print()
-    print("=" * 100)
+    print("=" * 120)
     print("ТОП-15 РЕЗУЛЬТАТОВ НА TEST")
-    print("=" * 100)
+    print("=" * 120)
 
     for result in test_results[:15]:
         print_result(result)
 
     # ========================================================
-    # НАИБОЛЕЕ ИНТЕРЕСНЫЕ УСТОЙЧИВЫЕ КАНДИДАТЫ
+    # УСТОЙЧИВЫЕ КАНДИДАТЫ
     # ========================================================
 
     robust = []
 
-    for result in test_results:
+    for test_result in test_results:
 
+        matching_train = None
+
+        for train_result in train_results:
+
+            if (
+                train_result["buy"]
+                == test_result["buy"]
+                and
+                train_result["sell"]
+                == test_result["sell"]
+            ):
+
+                matching_train = train_result
+                break
+
+        if matching_train is None:
+            continue
+
+        # Требуем прибыль И на TRAIN,
+        # И на TEST.
         if (
-            result["profit"] > 0
-            and result["trades"] >= 5
-            and result["max_drawdown_percent"] < 10
+            matching_train["profit"] > 0
+            and test_result["profit"] > 0
+
+            and matching_train["profit_factor"] > 1
+            and test_result["profit_factor"] > 1
+
+            and test_result["trades"] >= 10
+
+            and
+            test_result["max_drawdown_percent"] < 10
         ):
-            robust.append(
-                result
-            )
+
+            robust.append({
+                "train": matching_train,
+                "test": test_result
+            })
 
     print()
-    print("=" * 100)
+    print("=" * 120)
     print("КАНДИДАТЫ ДЛЯ ДАЛЬНЕЙШЕЙ ПРОВЕРКИ")
-    print("=" * 100)
+    print("=" * 120)
 
-    if robust:
+    if not robust:
 
-        for result in robust[:10]:
-            print_result(result)
+        print(
+            "Устойчивых вариантов пока не найдено."
+        )
 
     else:
 
-        print(
-            "Пока устойчивых вариантов "
-            "по этим условиям не найдено."
-        )
+        for item in robust[:10]:
+
+            print()
+            print("TRAIN:")
+
+            print_result(
+                item["train"]
+            )
+
+            print("TEST:")
+
+            print_result(
+                item["test"]
+            )
 
     print()
-    print("=" * 100)
+    print("=" * 120)
     print("ВАЖНО")
-    print("=" * 100)
+    print("=" * 120)
+
+    print(
+        "Теперь убыточные сделки "
+        "тоже закрываются и учитываются."
+    )
+
+    print(
+        "Высокий процент побед сам по себе "
+        "не означает хорошую стратегию."
+    )
+
+    print(
+        "Особенно смотрим на TEST, "
+        "Profit Factor, просадку "
+        "и количество сделок."
+    )
 
     print(
         "Это исторический тест, "
@@ -723,21 +825,14 @@ def main():
     )
 
     print(
-        "Особенно важны результаты "
-        "на TEST-части, а не на TRAIN."
+        "Используются данные Binance BTCUSDC."
     )
 
     print(
-        "OPEN-позиция учитывается "
-        "по последней рыночной цене, "
-        "поэтому скрыть текущий убыток нельзя."
-    )
-
-    print(
-        "Данные сейчас Binance BTCUSDC. "
         "Перед реальной торговлей "
-        "стратегию дополнительно проверим "
-        "на данных максимально близких к Bybit."
+        "нужно отдельно проверить "
+        "исполнение, проскальзывание "
+        "и данные Bybit."
     )
 
 
