@@ -1,41 +1,49 @@
 import time
+import requests
 from datetime import datetime, timedelta, timezone
-from pybit.unified_trading import HTTP
 
-# =========================
-# НАСТРОЙКИ ТЕСТА
-# =========================
+
+# ============================================================
+# НАСТРОЙКИ
+# ============================================================
 
 SYMBOL = "BTCUSDC"
-CATEGORY = "spot"
-INTERVAL = "1"
+INTERVAL = "1m"
 
-# Сначала тестируем 90 дней.
-# Потом увеличим до 180/365.
+# Сначала 90 дней.
+# Когда убедимся, что всё работает, увеличим до 180/365.
 DAYS = 90
 
 START_CAPITAL = 1000.0
+
+# Размер каждой покупки
 ORDER_USDC = 50.0
 
-# Комиссия 0.1% на покупку и продажу
+# Комиссия:
+# 0.001 = 0.1% на каждую сторону
 COMMISSION = 0.001
 
 RSI_PERIOD = 14
 
-# Диапазон параметров, которые будем проверять
-BUY_RSI_VALUES = range(15, 36)      # 15 ... 35
-SELL_RSI_VALUES = range(65, 91)     # 65 ... 90
+# Какие уровни BUY будем автоматически проверять
+BUY_RSI_VALUES = range(15, 36)       # 15...35
+
+# Какие уровни SELL будем автоматически проверять
+SELL_RSI_VALUES = range(65, 91)      # 65...90
 
 
-session = HTTP(testnet=False)
+BINANCE_URL = "https://data-api.binance.vision/api/v3/klines"
 
 
-# =========================
-# ЗАГРУЗКА СВЕЧЕЙ BYBIT
-# =========================
+# ============================================================
+# ЗАГРУЗКА ИСТОРИИ BINANCE
+# ============================================================
 
 def download_candles():
-    print(f"Загружаю {DAYS} дней {SYMBOL} 1m с Bybit...")
+    print()
+    print("=" * 70)
+    print(f"Загружаю {DAYS} дней {SYMBOL} {INTERVAL}")
+    print("=" * 70)
 
     end_dt = datetime.now(timezone.utc)
     start_dt = end_dt - timedelta(days=DAYS)
@@ -45,69 +53,107 @@ def download_candles():
 
     candles = []
 
-    current_end = end_ms
+    current_start = start_ms
 
-    while current_end > start_ms:
-        result = session.get_kline(
-            category=CATEGORY,
-            symbol=SYMBOL,
-            interval=INTERVAL,
-            start=start_ms,
-            end=current_end,
-            limit=1000
-        )
+    session = requests.Session()
 
-        rows = result.get("result", {}).get("list", [])
+    while current_start < end_ms:
+
+        params = {
+            "symbol": SYMBOL,
+            "interval": INTERVAL,
+            "startTime": current_start,
+            "endTime": end_ms,
+            "limit": 1000
+        }
+
+        success = False
+
+        for attempt in range(5):
+            try:
+                response = session.get(
+                    BINANCE_URL,
+                    params=params,
+                    timeout=20
+                )
+
+                if response.status_code == 200:
+                    rows = response.json()
+                    success = True
+                    break
+
+                print(
+                    f"\nHTTP {response.status_code}. "
+                    f"Попытка {attempt + 1}/5"
+                )
+
+            except Exception as e:
+                print(
+                    f"\nОшибка соединения: {e}. "
+                    f"Попытка {attempt + 1}/5"
+                )
+
+            time.sleep(2)
+
+        if not success:
+            print("\nНе удалось скачать данные.")
+            return []
 
         if not rows:
             break
 
-        candles.extend(rows)
+        for row in rows:
+            candles.append({
+                "time": int(row[0]),
+                "open": float(row[1]),
+                "high": float(row[2]),
+                "low": float(row[3]),
+                "close": float(row[4]),
+                "volume": float(row[5])
+            })
 
-        oldest = min(int(row[0]) for row in rows)
+        last_open_time = int(rows[-1][0])
 
-        if oldest <= start_ms:
-            break
+        # следующая минутная свеча
+        current_start = last_open_time + 60_000
 
-        current_end = oldest - 1
+        print(
+            f"Загружено свечей: {len(candles):,}",
+            end="\r"
+        )
 
-        print(f"Загружено свечей: {len(candles)}", end="\r")
-
+        # небольшая пауза, чтобы не долбить сервер
         time.sleep(0.08)
 
-    # Bybit возвращает данные от новых к старым
-    unique = {}
-
-    for row in candles:
-        ts = int(row[0])
-
-        if ts >= start_ms:
-            unique[ts] = row
-
-    ordered = [unique[k] for k in sorted(unique)]
-
-    data = []
-
-    for row in ordered:
-        data.append({
-            "time": int(row[0]),
-            "open": float(row[1]),
-            "high": float(row[2]),
-            "low": float(row[3]),
-            "close": float(row[4])
-        })
+        if len(rows) < 1000:
+            break
 
     print()
-    print(f"Готово. Свечей: {len(data)}")
+    print(f"Готово. Всего свечей: {len(candles):,}")
 
-    return data
+    if candles:
+        first_date = datetime.fromtimestamp(
+            candles[0]["time"] / 1000,
+            tz=timezone.utc
+        )
+
+        last_date = datetime.fromtimestamp(
+            candles[-1]["time"] / 1000,
+            tz=timezone.utc
+        )
+
+        print(f"Начало: {first_date}")
+        print(f"Конец:   {last_date}")
+
+    return candles
 
 
-# =========================
-# RSI
-# =========================
+# ============================================================
+# RSI ПО ФОРМУЛЕ WILDER
+# ============================================================
 
 def calculate_rsi(closes, period=14):
+
     rsi = [None] * len(closes)
 
     if len(closes) <= period:
@@ -117,6 +163,7 @@ def calculate_rsi(closes, period=14):
     losses = []
 
     for i in range(1, period + 1):
+
         change = closes[i] - closes[i - 1]
 
         gains.append(max(change, 0))
@@ -132,13 +179,19 @@ def calculate_rsi(closes, period=14):
         rsi[period] = 100 - (100 / (1 + rs))
 
     for i in range(period + 1, len(closes)):
+
         change = closes[i] - closes[i - 1]
 
         gain = max(change, 0)
         loss = max(-change, 0)
 
-        avg_gain = ((avg_gain * (period - 1)) + gain) / period
-        avg_loss = ((avg_loss * (period - 1)) + loss) / period
+        avg_gain = (
+            (avg_gain * (period - 1)) + gain
+        ) / period
+
+        avg_loss = (
+            (avg_loss * (period - 1)) + loss
+        ) / period
 
         if avg_loss == 0:
             rsi[i] = 100.0
@@ -149,185 +202,417 @@ def calculate_rsi(closes, period=14):
     return rsi
 
 
-# =========================
+# ============================================================
 # ОДИН БЭКТЕСТ
-# =========================
+# ============================================================
 
-def run_backtest(data, rsi_values, buy_level, sell_level):
+def run_backtest(data, buy_level, sell_level):
+
+    closes = [x["close"] for x in data]
+
+    rsi_values = calculate_rsi(
+        closes,
+        RSI_PERIOD
+    )
+
     cash = START_CAPITAL
 
     btc = 0.0
+
     entry_price = None
-    entry_cost = None
+    entry_total_cost = None
 
     trades = []
 
+    total_fees = 0.0
+
     peak_equity = START_CAPITAL
     max_drawdown = 0.0
+    max_drawdown_percent = 0.0
 
-    for i in range(RSI_PERIOD + 1, len(data) - 1):
+    for i in range(
+        RSI_PERIOD + 1,
+        len(data) - 1
+    ):
 
-        current_rsi = rsi_values[i]
         previous_rsi = rsi_values[i - 1]
+        current_rsi = rsi_values[i]
 
-        if current_rsi is None or previous_rsi is None:
+        if (
+            previous_rsi is None
+            or current_rsi is None
+        ):
             continue
 
         current_close = data[i]["close"]
 
-        # Исполнение на открытии следующей свечи
+        # Сигнал получаем на закрытии текущей свечи,
+        # исполняем на открытии следующей.
         next_open = data[i + 1]["open"]
 
-        # BUY: RSI пересёк уровень снизу вверх
+        # BUY:
+        # RSI был ниже/равен уровню
+        # и пересёк его снизу вверх.
         buy_signal = (
             previous_rsi <= buy_level
             and current_rsi > buy_level
         )
 
-        # SELL: RSI пересёк уровень сверху вниз
+        # SELL:
+        # RSI был выше/равен уровню
+        # и пересёк его сверху вниз.
         sell_signal = (
             previous_rsi >= sell_level
             and current_rsi < sell_level
         )
 
-        if btc == 0 and buy_signal and cash >= ORDER_USDC:
+        # --------------------------
+        # ПОКУПКА
+        # --------------------------
+
+        if (
+            btc == 0
+            and buy_signal
+            and cash >= ORDER_USDC
+        ):
 
             buy_fee = ORDER_USDC * COMMISSION
-            usable_usdc = ORDER_USDC - buy_fee
+
+            usable_usdc = (
+                ORDER_USDC - buy_fee
+            )
 
             btc = usable_usdc / next_open
+
             entry_price = next_open
-            entry_cost = ORDER_USDC
+            entry_total_cost = ORDER_USDC
 
             cash -= ORDER_USDC
 
-        elif btc > 0 and sell_signal:
+            total_fees += buy_fee
 
-            # Продаём только если цена выше цены покупки
-            if current_close > entry_price:
+        # --------------------------
+        # ПРОДАЖА
+        # --------------------------
 
-                gross_value = btc * next_open
-                sell_fee = gross_value * COMMISSION
-                received = gross_value - sell_fee
+        elif (
+            btc > 0
+            and sell_signal
+        ):
+
+            gross_value = btc * next_open
+
+            sell_fee = (
+                gross_value * COMMISSION
+            )
+
+            received = (
+                gross_value - sell_fee
+            )
+
+            # Продаём только если после комиссии
+            # получим больше, чем потратили.
+            profitable_after_fees = (
+                received > entry_total_cost
+            )
+
+            if profitable_after_fees:
 
                 cash += received
 
-                pnl = received - entry_cost
+                pnl = (
+                    received - entry_total_cost
+                )
 
                 trades.append(pnl)
 
+                total_fees += sell_fee
+
                 btc = 0.0
                 entry_price = None
-                entry_cost = None
+                entry_total_cost = None
 
-        # Equity с учётом открытой BTC позиции
-        equity = cash + (btc * current_close)
+        # --------------------------
+        # EQUITY И ПРОСАДКА
+        # --------------------------
+
+        equity = (
+            cash
+            + btc * current_close
+        )
 
         if equity > peak_equity:
             peak_equity = equity
 
-        drawdown = peak_equity - equity
+        drawdown = (
+            peak_equity - equity
+        )
 
         if drawdown > max_drawdown:
             max_drawdown = drawdown
 
-    # Открытая позиция оценивается по последней цене,
-    # чтобы убыток нельзя было "спрятать".
+        if peak_equity > 0:
+
+            dd_percent = (
+                drawdown
+                / peak_equity
+                * 100
+            )
+
+            if (
+                dd_percent
+                > max_drawdown_percent
+            ):
+                max_drawdown_percent = (
+                    dd_percent
+                )
+
+    # ========================================================
+    # ОТКРЫТАЯ ПОЗИЦИЯ
+    # ========================================================
+
     last_price = data[-1]["close"]
 
-    final_equity = cash + (btc * last_price)
+    final_equity = (
+        cash
+        + btc * last_price
+    )
 
-    net_profit = final_equity - START_CAPITAL
+    net_profit = (
+        final_equity
+        - START_CAPITAL
+    )
 
-    winning = sum(1 for x in trades if x > 0)
-    losing = sum(1 for x in trades if x < 0)
+    closed_trades = len(trades)
 
-    gross_profit = sum(x for x in trades if x > 0)
-    gross_loss = abs(sum(x for x in trades if x < 0))
+    winning_trades = sum(
+        1 for x in trades
+        if x > 0
+    )
+
+    losing_trades = sum(
+        1 for x in trades
+        if x < 0
+    )
+
+    gross_profit = sum(
+        x for x in trades
+        if x > 0
+    )
+
+    gross_loss = abs(
+        sum(
+            x for x in trades
+            if x < 0
+        )
+    )
 
     if gross_loss > 0:
-        profit_factor = gross_profit / gross_loss
+
+        profit_factor = (
+            gross_profit
+            / gross_loss
+        )
+
     elif gross_profit > 0:
+
         profit_factor = 999.0
+
     else:
+
         profit_factor = 0.0
 
-    win_rate = (
-        winning / len(trades) * 100
-        if trades
-        else 0
-    )
+    if closed_trades > 0:
+
+        win_rate = (
+            winning_trades
+            / closed_trades
+            * 100
+        )
+
+        average_trade = (
+            sum(trades)
+            / closed_trades
+        )
+
+    else:
+
+        win_rate = 0.0
+        average_trade = 0.0
 
     return {
         "buy": buy_level,
         "sell": sell_level,
+
         "profit": net_profit,
-        "trades": len(trades),
+
+        "trades": closed_trades,
+
+        "wins": winning_trades,
+        "losses": losing_trades,
+
         "win_rate": win_rate,
-        "max_drawdown": max_drawdown,
+
+        "gross_profit": gross_profit,
+        "gross_loss": gross_loss,
+
         "profit_factor": profit_factor,
+
+        "max_drawdown": max_drawdown,
+        "max_drawdown_percent":
+            max_drawdown_percent,
+
+        "average_trade": average_trade,
+
+        "fees": total_fees,
+
         "open_position": btc > 0
     }
 
 
-# =========================
-# ПОИСК ПАРАМЕТРОВ
-# =========================
+# ============================================================
+# ПЕЧАТЬ РЕЗУЛЬТАТА
+# ============================================================
+
+def print_result(result):
+
+    print(
+        f"BUY {result['buy']:>2}  "
+        f"SELL {result['sell']:>2} | "
+        f"Profit ${result['profit']:>8.2f} | "
+        f"Trades {result['trades']:>4} | "
+        f"Win {result['win_rate']:>6.2f}% | "
+        f"DD ${result['max_drawdown']:>7.2f} | "
+        f"DD {result['max_drawdown_percent']:>6.2f}% | "
+        f"PF {result['profit_factor']:>7.2f} | "
+        f"Fees ${result['fees']:>7.2f}"
+    )
+
+
+# ============================================================
+# ОСНОВНАЯ ПРОГРАММА
+# ============================================================
 
 def main():
+
     data = download_candles()
 
-    if len(data) < 1000:
-        print("Недостаточно данных.")
+    if len(data) < 5000:
+        print()
+        print(
+            "Недостаточно исторических данных."
+        )
         return
 
-    closes = [x["close"] for x in data]
-    rsi_values = calculate_rsi(closes, RSI_PERIOD)
+    print()
+    print("=" * 70)
+    print("РАЗДЕЛЕНИЕ ИСТОРИИ")
+    print("=" * 70)
 
-    # 70% истории для подбора
-    split = int(len(data) * 0.70)
+    # 70% истории:
+    # подбор параметров
+    split_index = int(
+        len(data) * 0.70
+    )
 
-    train_data = data[:split]
-    train_rsi = rsi_values[:split]
+    train_data = data[:split_index]
 
-    # 30% истории — отдельная проверка
-    test_data = data[split - RSI_PERIOD - 2:]
-    test_rsi = rsi_values[split - RSI_PERIOD - 2:]
+    # 30%:
+    # данные, которые параметры
+    # при подборе не видели
+    test_data = data[split_index:]
 
-    candidates = []
+    print(
+        f"TRAIN свечей: "
+        f"{len(train_data):,}"
+    )
+
+    print(
+        f"TEST свечей:  "
+        f"{len(test_data):,}"
+    )
 
     print()
-    print("Проверяю комбинации RSI...")
+    print("=" * 70)
+    print("ПРОВЕРЯЮ КОМБИНАЦИИ RSI")
+    print("=" * 70)
 
-    total = len(BUY_RSI_VALUES) * len(SELL_RSI_VALUES)
-    count = 0
+    train_results = []
+
+    total = (
+        len(BUY_RSI_VALUES)
+        * len(SELL_RSI_VALUES)
+    )
+
+    counter = 0
 
     for buy_level in BUY_RSI_VALUES:
 
         for sell_level in SELL_RSI_VALUES:
 
-            count += 1
+            counter += 1
 
-            train = run_backtest(
+            result = run_backtest(
                 train_data,
-                train_rsi,
                 buy_level,
                 sell_level
             )
 
-            # Не рассматриваем варианты,
-            # где почти нет сделок
-            if train["trades"] < 10:
-                continue
+            # Слишком мало сделок —
+            # такой результат ненадёжен.
+            if result["trades"] >= 10:
 
-            candidates.append(train)
+                train_results.append(
+                    result
+                )
 
-            if count % 50 == 0:
-                print(f"Проверено {count}/{total}")
+            if counter % 25 == 0:
 
-    # Сначала отбираем хорошие результаты
-    # на тренировочной части
-    candidates.sort(
+                print(
+                    f"Проверено "
+                    f"{counter}/{total}",
+                    end="\r"
+                )
+
+    print()
+
+    if not train_results:
+
+        print(
+            "Не найдено вариантов "
+            "с достаточным количеством сделок."
+        )
+        return
+
+    # ========================================================
+    # НЕ БЕРЁМ ПРОСТО МАКСИМАЛЬНУЮ ПРИБЫЛЬ
+    #
+    # Сначала нужны:
+    # - положительная прибыль
+    # - разумная просадка
+    # - достаточное количество сделок
+    # ========================================================
+
+    filtered = []
+
+    for result in train_results:
+
+        if (
+            result["profit"] > 0
+            and result["max_drawdown_percent"] < 10
+        ):
+
+            filtered.append(
+                result
+            )
+
+    if not filtered:
+        filtered = train_results
+
+    # Сортировка:
+    # сначала прибыль,
+    # затем меньшая просадка.
+    filtered.sort(
         key=lambda x: (
             x["profit"],
             -x["max_drawdown"]
@@ -335,80 +620,125 @@ def main():
         reverse=True
     )
 
-    top_train = candidates[:30]
+    # Берём 30 лучших кандидатов TRAIN
+    top_train = filtered[:30]
 
-    final_results = []
+    print()
+    print("=" * 70)
+    print("ТОП-10 НА TRAIN")
+    print("=" * 70)
 
-    # Теперь эти варианты проверяем
-    # на данных, которые не использовали для подбора
+    for result in top_train[:10]:
+        print_result(result)
+
+    # ========================================================
+    # ПРОВЕРКА НА НЕВИДАННЫХ ДАННЫХ
+    # ========================================================
+
+    print()
+    print("=" * 70)
+    print("ПРОВЕРКА НА НЕВИДАННЫХ TEST-ДАННЫХ")
+    print("=" * 70)
+
+    test_results = []
+
     for candidate in top_train:
 
-        test = run_backtest(
+        result = run_backtest(
             test_data,
-            test_rsi,
             candidate["buy"],
             candidate["sell"]
         )
 
-        final_results.append({
-            "buy": candidate["buy"],
-            "sell": candidate["sell"],
+        test_results.append(
+            result
+        )
 
-            "train_profit": candidate["profit"],
-            "train_trades": candidate["trades"],
-            "train_dd": candidate["max_drawdown"],
+    # ========================================================
+    # РАНЖИРОВАНИЕ TEST
+    # ========================================================
 
-            "test_profit": test["profit"],
-            "test_trades": test["trades"],
-            "test_win_rate": test["win_rate"],
-            "test_dd": test["max_drawdown"],
-            "test_pf": test["profit_factor"],
-            "open_position": test["open_position"]
-        })
-
-    # Приоритет: положительный результат
-    # на НЕВИДАННЫХ данных
-    final_results.sort(
+    # Нам важны:
+    # прибыль,
+    # количество сделок,
+    # просадка.
+    test_results.sort(
         key=lambda x: (
-            x["test_profit"],
-            -x["test_dd"]
+            x["profit"],
+            -x["max_drawdown"]
         ),
         reverse=True
     )
 
     print()
-    print("=" * 90)
-    print("ТОП РЕЗУЛЬТАТОВ НА ОТДЕЛЬНОЙ ТЕСТОВОЙ ЧАСТИ")
-    print("=" * 90)
+    print("=" * 100)
+    print("ТОП-15 РЕЗУЛЬТАТОВ НА TEST")
+    print("=" * 100)
 
-    print(
-        f"{'BUY':>5} "
-        f"{'SELL':>5} "
-        f"{'TEST $':>10} "
-        f"{'TRADES':>8} "
-        f"{'WIN %':>8} "
-        f"{'DD $':>10} "
-        f"{'PF':>8} "
-        f"{'OPEN':>7}"
-    )
+    for result in test_results[:15]:
+        print_result(result)
 
-    for result in final_results[:15]:
+    # ========================================================
+    # НАИБОЛЕЕ ИНТЕРЕСНЫЕ УСТОЙЧИВЫЕ КАНДИДАТЫ
+    # ========================================================
+
+    robust = []
+
+    for result in test_results:
+
+        if (
+            result["profit"] > 0
+            and result["trades"] >= 5
+            and result["max_drawdown_percent"] < 10
+        ):
+            robust.append(
+                result
+            )
+
+    print()
+    print("=" * 100)
+    print("КАНДИДАТЫ ДЛЯ ДАЛЬНЕЙШЕЙ ПРОВЕРКИ")
+    print("=" * 100)
+
+    if robust:
+
+        for result in robust[:10]:
+            print_result(result)
+
+    else:
 
         print(
-            f"{result['buy']:>5} "
-            f"{result['sell']:>5} "
-            f"{result['test_profit']:>10.2f} "
-            f"{result['test_trades']:>8} "
-            f"{result['test_win_rate']:>8.2f} "
-            f"{result['test_dd']:>10.2f} "
-            f"{result['test_pf']:>8.2f} "
-            f"{str(result['open_position']):>7}"
+            "Пока устойчивых вариантов "
+            "по этим условиям не найдено."
         )
 
     print()
-    print("Важно:")
-    print("Это исторический тест, а не гарантия будущей прибыли.")
-    print("Особенно смотрим на TEST $, DD $, количество сделок и OPEN.")
+    print("=" * 100)
+    print("ВАЖНО")
+    print("=" * 100)
+
+    print(
+        "Это исторический тест, "
+        "а не гарантия будущей прибыли."
+    )
+
+    print(
+        "Особенно важны результаты "
+        "на TEST-части, а не на TRAIN."
+    )
+
+    print(
+        "OPEN-позиция учитывается "
+        "по последней рыночной цене, "
+        "поэтому скрыть текущий убыток нельзя."
+    )
+
+    print(
+        "Данные сейчас Binance BTCUSDC. "
+        "Перед реальной торговлей "
+        "стратегию дополнительно проверим "
+        "на данных максимально близких к Bybit."
+    )
 
 
 if __name__ == "__main__":
